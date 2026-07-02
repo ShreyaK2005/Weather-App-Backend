@@ -7,17 +7,31 @@ Docs at:   http://127.0.0.1:8000/docs
 import json
 import csv
 import io
+import logging
 
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
+from Weather_Service import get_air_quality_advice
+from sqlalchemy import func
 
 import models, schemas, Weather_Service
 from Database import engine, get_db
 
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet
+
 # Create DB tables on startup (fine for SQLite + a project this size)
 models.Base.metadata.create_all(bind=engine)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Weather App API")
 
@@ -34,17 +48,49 @@ app.add_middleware(
 
 @app.get("/weather/current")
 async def current_weather(location: str = Query(..., description="City, zip, landmark, or 'lat,lon'")):
+    logger.info(f"Weather request received for location: {location}")
     try:
         loc = await Weather_Service.geocode_location(location)
 
     except Weather_Service.LocationNotFoundError as e:
+        logger.warning(f"Location not found: {location}")
         raise HTTPException(status_code=404, detail=str(e))
 
     except Weather_Service.WeatherServiceError as e:
+        logger.error(f"Weather API unavailable: {e}")
         raise HTTPException(status_code=503, detail=str(e))
 
     data = await Weather_Service.get_current_and_forecast(loc["latitude"], loc["longitude"])
-    return {"location": loc, "current": data.get("current"), "daily_forecast": data.get("daily")}
+    logger.info(f"Successfully retrieved weather for {loc['name']}")
+    air_quality = await Weather_Service.get_air_quality(loc["latitude"], loc["longitude"])
+    air_quality["status"] = Weather_Service.get_aqi_description(air_quality.get("european_aqi", 0))
+    air_quality["health_advice"] = Weather_Service.get_air_quality_advice(air_quality.get("european_aqi", 0))
+    temperature = data["current"]["temperature_2m"]
+    daily = data.get("daily", {})
+
+    uv_index = None
+
+    if daily.get("uv_index_max"):
+        uv_index = daily["uv_index_max"][0]
+    return {
+        "location": loc,
+        "current": data.get("current"),
+        "daily_forecast": data.get("daily"),
+        "air_quality": air_quality,
+        "google_maps": Weather_Service.get_google_maps_url(
+            loc["latitude"],
+            loc["longitude"]
+        ),
+        "youtube": Weather_Service.get_youtube_url(
+            loc["name"]
+        ),
+        "weather_advice": Weather_Service.weather_advice(
+            temperature
+        ),
+        "uv_index": uv_index,
+
+        "uv_advice": Weather_Service.get_uv_advice(uv_index)
+    }
 
 
 # ---------- CRUD endpoints (Assessment 2, section 2.1) ----------
@@ -186,12 +232,53 @@ def delete_record(record_id: int, db: Session = Depends(get_db)):
 # ---------- Export endpoint (Assessment 2, section 2.3) ----------
 
 @app.get("/records/{record_id}/export")
-def export_record(record_id: int, format: str = Query("json", enum=["json", "csv", "xml", "markdown"]), db: Session = Depends(get_db)):
+async def export_record (record_id: int, format: str = Query("json", enum=["json", "csv", "xml", "markdown","pdf"]), db: Session = Depends(get_db)):
     record = db.query(models.WeatherRecord).filter(models.WeatherRecord.id == record_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Record not found")
 
     data = _serialize(record)
+    # Fetch live weather information for the stored location
+    weather = await Weather_Service.get_current_and_forecast(
+        record.latitude,
+        record.longitude
+    )
+
+    air_quality = await Weather_Service.get_air_quality(
+        record.latitude,
+        record.longitude
+    )
+
+    temperature = weather["current"]["temperature_2m"]
+
+    uv_index = None
+    if weather.get("daily", {}).get("uv_index_max"):
+        uv_index = weather["daily"]["uv_index_max"][0]
+
+    google_maps = Weather_Service.get_google_maps_url(
+        record.latitude,
+        record.longitude
+    )
+
+    youtube = Weather_Service.get_youtube_url(
+        record.resolved_name
+    )
+
+    weather_advice = Weather_Service.weather_advice(
+        temperature
+    )
+
+    aqi_status = Weather_Service.get_aqi_description(
+        air_quality.get("european_aqi", 0)
+    )
+
+    aqi_advice = Weather_Service.get_air_quality_advice(
+        air_quality.get("european_aqi", 0)
+    )
+
+    uv_advice = Weather_Service.get_uv_advice(
+        uv_index
+    )
 
     if format == "json":
         content = json.dumps(data, default=str, indent=2)
@@ -221,6 +308,131 @@ def export_record(record_id: int, format: str = Query("json", enum=["json", "csv
             lines.append(f"| {d['date']} | {d['temp_max']} | {d['temp_min']} |")
         content = "\n".join(lines)
         media_type = "text/markdown"
+
+    elif format == "pdf":
+        buffer = io.BytesIO()
+
+        doc = SimpleDocTemplate(buffer)
+
+        styles = getSampleStyleSheet()
+
+        elements = []
+
+        elements.append(
+            Paragraph(
+                f"<b>Weather Record</b>",
+                styles["Title"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"Location: {data['resolved_name']}",
+                styles["Heading2"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"Date Range: {data['start_date']} to {data['end_date']}",
+                styles["Normal"]
+            )
+        )
+        elements.append(
+            Paragraph(
+                f"<b>Current Temperature:</b> {temperature} °C",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>Air Quality:</b> {aqi_status}",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>Health Advice:</b> {aqi_advice}",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>UV Index:</b> {uv_index}",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>UV Advice:</b> {uv_advice}",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>Weather Recommendation:</b> {weather_advice}",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>Google Maps:</b> {google_maps}",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>YouTube:</b> {youtube}",
+                styles["Normal"]
+            )
+        )
+
+        elements.append(Paragraph("<br/>", styles["Normal"]))
+
+        elements.append(Paragraph("<br/>", styles["Normal"]))
+
+        table_data = [
+            ["Date", "Max Temp (°C)", "Min Temp (°C)"]
+        ]
+
+        for day in data["weather_data"]:
+            table_data.append([
+                day["date"],
+                str(day["temp_max"]),
+                str(day["temp_min"])
+            ])
+
+        table = Table(table_data)
+
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightblue),
+            ("GRID", (0, 0), (-1, -1), 1, colors.black),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+        ]))
+
+        elements.append(table)
+
+        doc.build(elements)
+
+        buffer.seek(0)
+
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition":
+                    f"attachment; filename=record_{record_id}.pdf"
+            },
+        )
 
     return StreamingResponse(
         io.StringIO(content),
