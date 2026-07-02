@@ -2,10 +2,16 @@
 Database connection setup using SQLAlchemy + SQLite.
 SQLite is fine for this project — zero setup, file-based, good enough for the assessment.
 """
+
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./weather_app.db"
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
