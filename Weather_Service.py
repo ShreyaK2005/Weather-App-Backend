@@ -9,10 +9,14 @@ Docs: https://open-meteo.com/en/docs
 """
 import httpx
 from datetime import date
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
-GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
-FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+GEOCODE_URL = os.getenv("GEOCODE_URL")
+FORECAST_URL = os.getenv("FORECAST_URL")
+ARCHIVE_URL = os.getenv("ARCHIVE_URL")
+AIR_QUALITY_URL = os.getenv("AIR_QUALITY_URL")
 
 
 class LocationNotFoundError(Exception):
@@ -67,8 +71,18 @@ async def get_current_and_forecast(lat: float, lon: float) -> dict:
     params = {
         "latitude": lat,
         "longitude": lon,
-        "current": "temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m",
-        "daily": "temperature_2m_max,temperature_2m_min,weather_code",
+        "current": (
+            "temperature_2m,"
+            "weather_code,"
+            "wind_speed_10m,"
+            "relative_humidity_2m"
+        ),
+        "daily": (
+            "temperature_2m_max,"
+            "temperature_2m_min,"
+            "weather_code,"
+            "uv_index_max"
+        ),
         "forecast_days": 5,
         "timezone": "auto",
     }
@@ -140,3 +154,109 @@ async def get_daily_range(lat: float, lon: float, start: date, end: date) -> lis
         for d, hi, lo in zip(dates, tmax, tmin):
             merged.append({"date": d, "temp_max": hi, "temp_min": lo})
     return merged
+
+
+async def get_air_quality(lat: float, lon: float) -> dict:
+    """
+    Fetch current air quality information for a location.
+    """
+
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "current": "european_aqi,pm10,pm2_5,carbon_monoxide,nitrogen_dioxide,ozone",
+        "timezone": "auto",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(AIR_QUALITY_URL, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+    except (httpx.RequestError, httpx.HTTPStatusError):
+        raise WeatherServiceError("Unable to retrieve air quality data.")
+
+    return data.get("current", {})
+
+def get_google_maps_url(lat: float, lon: float) -> str:
+    return f"https://www.google.com/maps?q={lat},{lon}"
+def get_youtube_url(location: str) -> str:
+    return (
+        f"https://www.youtube.com/results?search_query={location}"
+    )
+def weather_advice(temp: float) -> list[str]:
+
+    advice = []
+
+    if temp >= 35:
+        advice.extend([
+            "Stay hydrated.",
+            "Wear light clothing.",
+            "Avoid prolonged outdoor activity during the afternoon."
+        ])
+
+    elif temp <= 10:
+        advice.extend([
+            "Wear warm clothing.",
+            "Be cautious of cold weather."
+        ])
+
+    else:
+        advice.append(
+            "Weather conditions are comfortable."
+        )
+
+    return advice
+def get_aqi_description(aqi: int) -> str:
+    if aqi <= 20:
+        return "Excellent"
+
+    elif aqi <= 40:
+        return "Good"
+
+    elif aqi <= 60:
+        return "Moderate"
+
+    elif aqi <= 80:
+        return "Poor"
+
+    elif aqi <= 100:
+        return "Very Poor"
+
+    return "Extremely Poor"
+def get_air_quality_advice(aqi: int) -> str:
+    if aqi <= 20:
+        return "Excellent air quality. Outdoor activities are ideal."
+
+    elif aqi <= 40:
+        return "Air quality is good. Most people can enjoy outdoor activities."
+
+    elif aqi <= 60:
+        return "Sensitive individuals should limit prolonged outdoor exertion."
+
+    elif aqi <= 80:
+        return "Consider reducing outdoor activities, especially if you have asthma."
+
+    elif aqi <= 100:
+        return "Avoid strenuous outdoor exercise."
+
+    return "Stay indoors if possible and wear a mask when outside."
+def get_uv_advice(uv):
+    if uv is None:
+        return "UV data unavailable."
+
+    if uv <= 2:
+        return "Low UV exposure. Minimal protection needed."
+
+    elif uv <= 5:
+        return "Moderate UV exposure. Consider sunglasses and sunscreen."
+
+    elif uv <= 7:
+        return "High UV exposure. Use sunscreen and seek shade during midday."
+
+    elif uv <= 10:
+        return "Very High UV exposure. Wear protective clothing and avoid prolonged sun exposure."
+
+    else:
+        return "Extreme UV exposure. Avoid going outdoors unless absolutely necessary."
