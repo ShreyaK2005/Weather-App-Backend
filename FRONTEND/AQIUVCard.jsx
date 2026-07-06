@@ -2,6 +2,22 @@ export default function AQIUVCard({ weather }) {
 
   if (!weather) return null;
 
+  if (!weather.air_quality) {
+    return (
+        <div className="bg-white rounded-xl shadow-lg p-6 mt-8 text-center">
+          <h2 className="text-2xl font-bold mb-4">
+            🌫 Air Quality
+          </h2>
+
+          <p>
+            Air quality data is only available for the current weather.
+          </p>
+        </div>
+    );
+  }
+
+  const airQuality = weather.air_quality;
+
   return (
 
       <div className="grid grid-cols-2 gap-6 mt-8">
@@ -12,25 +28,31 @@ export default function AQIUVCard({ weather }) {
             🌫 Air Quality
           </h2>
 
-          <p><strong>AQI:</strong> {weather.air_quality.european_aqi}</p>
+          {airQuality ? (
 
-          <p><strong>Status:</strong> {weather.air_quality.status}</p>
+              <>
+                <p><strong>AQI:</strong> {airQuality.european_aqi}</p>
+                <p><strong>Status:</strong> {airQuality.status}</p>
+                <p><strong>PM2.5:</strong> {airQuality.pm2_5}</p>
+                <p><strong>PM10:</strong> {airQuality.pm10}</p>
+                <p><strong>CO:</strong> {airQuality.carbon_monoxide}</p>
+                <p><strong>NO₂:</strong> {airQuality.nitrogen_dioxide}</p>
+                <p><strong>Ozone:</strong> {airQuality.ozone}</p>
 
-          <p><strong>PM2.5:</strong> {weather.air_quality.pm2_5}</p>
+                <div className="mt-4 text-green-700 text-center">
+                  {airQuality.health_advice}
+                </div>
 
-          <p><strong>PM10:</strong> {weather.air_quality.pm10}</p>
+              </>
 
-          <p><strong>CO:</strong> {weather.air_quality.carbon_monoxide}</p>
+          ) : (
 
-          <p><strong>NO₂:</strong> {weather.air_quality.nitrogen_dioxide}</p>
+              <p className="text-gray-500">
+                Air quality data is only available for the current weather.
+              </p>
 
-          <p><strong>Ozone:</strong> {weather.air_quality.ozone}</p>
+          )}
 
-          <div className="mt-4 text-green-700 text-center">
-
-            {weather.air_quality.health_advice}
-
-          </div>
 
         </div>
 
