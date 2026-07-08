@@ -20,7 +20,8 @@ export default function AQIUVCard({ weather }) {
 
   return (
 
-      <div className="grid grid-cols-2 gap-6 mt-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 mt-8">
+
 
         <div className="bg-white rounded-xl shadow-lg p-6">
 
