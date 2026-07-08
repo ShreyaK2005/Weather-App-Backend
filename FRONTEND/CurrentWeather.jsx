@@ -68,7 +68,7 @@ export default function CurrentWeather({ weather }) {
         ) : (
 
             <>
-              <div className="grid grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
                 <div className="bg-blue-100 rounded-xl p-4">
                   <h3 className="text-gray-500">Temperature</h3>
